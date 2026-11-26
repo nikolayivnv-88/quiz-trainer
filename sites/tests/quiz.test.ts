@@ -8,6 +8,15 @@ import { initialize,load,mutate } from '../lib/quiz/storage';
 import { api } from '../lib/quiz/http';
 import cases from './normalization.json' with {type:'json'};
 import bank from './questions.json' with {type:'json'};
+import { accessFor } from '../lib/quiz/access';
+import './public-ui.test';
+
+test('only the configured owner gains management rights; sign-in alone is insufficient',()=>{
+  assert.equal(accessFor(null,'owner@example.test').canManage,false);
+  assert.equal(accessFor({email:'visitor@example.test'},'owner@example.test').canManage,false);
+  assert.equal(accessFor({email:'owner@example.test'},undefined).canManage,false);
+  assert.equal(accessFor({email:'Owner@example.test'},'owner@example.test').canManage,true);
+});
 
 test('Python normalization and all curated answer variants stay compatible',()=>{
   for(const c of cases)assert.equal(normalizeAnswer(c.input),c.normalized,c.input);
@@ -75,10 +84,27 @@ test('D1 persistence, transaction rollback, racing writers, import once and HTTP
     await mutate(db,q=>q.deleteQuestion(target));await initialize(db,env);
     state=await load(db);assert(!state.quiz.questions.some(q=>q.id===target));
     assert.equal(state.quiz.session(session.id).answers[0].correct,true);
-    const request=(method:string,body:any,headers:Record<string,string>={})=>new Request('https://quiz.test/api/sessions',{method,headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)});
+    const csrf='a'.repeat(64);
+    const request=(method:string,body:any,headers:Record<string,string>={},path='/api/sessions')=>new Request('https://quiz.test'+path,{method,headers:{'Content-Type':'application/json',Cookie:'quiz_trainer='+csrf,'X-Quiz-CSRF':csrf,...headers},body:body===undefined?undefined:JSON.stringify(body)});
     assert.equal((await api(request('POST',{}, {Origin:'https://evil.test'}),db,env)).status,403);
     assert.equal((await api(request('POST',{}, {'Content-Type':'text/plain'}),db,env)).status,415);
-    assert.equal((await api(request('POST',{mode:'topic',count:1}),db,env)).status,201);
+    assert.equal((await api(request('POST',{mode:'topic',count:1},{'X-Quiz-CSRF':''}),db,env)).status,403);
+    assert.equal((await api(request('POST',{mode:'topic',count:1},{Cookie:''}),db,env)).status,403);
+    const created=await api(request('POST',{mode:'topic',count:1}),db,env);
+    assert.equal(created.status,201);
+    const guest=await created.json() as any;
+    assert.equal((await api(request('PATCH',{action:'next',revision:0,question_index:0,text:'guest answer'}, {},'/api/sessions/'+guest.id),db,env)).status,200);
+    assert.equal((await api(request('PATCH',{action:'accept_answer',revision:1,index:0},{},'/api/sessions/'+guest.id),db,env)).status,403);
+    assert.equal((await api(request('DELETE',undefined,{},'/api/sessions/'+guest.id),db,env)).status,403);
+    const question=(await load(db)).quiz.questions[0];
+    const original=JSON.stringify(question);
+    assert.equal((await api(request('PUT',{...question,answer:'changed'}, {},'/api/questions/'+question.id),db,env)).status,403);
+    assert.equal((await api(request('DELETE',undefined,{},'/api/questions/'+question.id),db,env)).status,403);
+    assert.equal(JSON.stringify((await load(db)).quiz.questions.find(q=>q.id===question.id)),original);
+    const bootstrap=await (await api(request('GET',undefined,{},'/api/bootstrap'),db,env)).json() as any;
+    assert.equal(bootstrap.permissions.can_manage,false);assert.equal(bootstrap.csrf_token,csrf);
+    assert.equal((await api(request('PUT',{...question,explanation:'Owner edit'}, {},'/api/questions/'+question.id),db,env,{canManage:true})).status,200);
+    assert.equal((await api(request('DELETE',undefined,{},'/api/sessions/'+guest.id),db,env,{canManage:true})).status,200);
     assert.equal((await api(new Request('https://quiz.test/data/quiz.sqlite3'),db,env)).status,404);
     assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM quiz_guard').first<any>())!.n,0);
   }finally{await mf.dispose();}

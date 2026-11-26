@@ -8,12 +8,13 @@ const checkIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 
 const slidersIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 3v8m8 2v8"/></svg>';
 const statusNames = {playing:"В процес", review:"Проверени отговори", completed:"Завършена"};
 const state = {data:null, questions:[], session:null, draft:null, mode:"topic", categories:[], difficulty:"mixed", count:10, library:{q:"",category:"",kind:"",limit:25}, busy:false};
+const canManage = () => state.data?.permissions?.can_manage === true;
 let autosaveTimeout, toastTimeout, searchTimeout, routeVersion = 0, mutationTail = Promise.resolve();
 
 async function api(path, method = "GET", body) {
   let response;
   try {
-    response = await fetch(path, {method, headers:body === undefined ? {} : {"Content-Type":"application/json"}, body:body === undefined ? undefined : JSON.stringify(body), cache:"no-store"});
+    response = await fetch(path, {method, headers:{...(body === undefined ? {} : {"Content-Type":"application/json"}), ...(method === "GET" ? {} : {"X-Quiz-CSRF":state.data?.csrf_token || ""})}, body:body === undefined ? undefined : JSON.stringify(body), cache:"no-store"});
   } catch {
     throw new Error("Няма връзка с приложението. Проверете интернет връзката и презаредете.");
   }
@@ -35,6 +36,10 @@ async function loadData() {
   const [data, bank] = await Promise.all([api("/api/bootstrap"), api("/api/questions")]);
   state.data = data;
   state.questions = bank.questions;
+  const accessControl = $("#access-control");
+  if (accessControl) accessControl.innerHTML = canManage()
+    ? '<a class="quiet" href="/signout-with-chatgpt?return_to=%2F" target="_top">Изход от управлението</a>'
+    : '<a class="quiet" href="/signin-with-chatgpt?return_to=%2F" target="_top">Управление</a>';
 }
 
 function dateLabel(iso, time = false) {
@@ -154,7 +159,7 @@ function history() {
   main.innerHTML = `<div class="page-heading"><div><h1>История</h1></div></div>
   <div class="metric-grid"><div class="metric"><strong class="number">${stats.completed}</strong><span>завършени тренировки</span></div><div class="metric"><strong class="number">${total ? `${Math.round(correct/total*100)}%` : "—"}</strong><span>верни от ${total} оценени отговора</span></div><div class="metric"><strong class="number">${stats.missed}</strong><span>въпроса за втори шанс</span></div></div>
   <section><div class="section-heading"><h2>По категории</h2><span class="small">Верни / оценени</span></div>${categoryRows(stats.categories)}${stats.missed ? '<button class="secondary spaced" data-action="retry">Тренирай пропуските</button>' : ""}</section>
-  <section class="spaced"><div class="section-heading"><h2>Всички тренировки</h2></div>${state.data.sessions.length ? `<div class="table-wrapper" tabindex="0" role="region" aria-label="Всички тренировки"><table class="history-table"><thead><tr><th>Тренировка</th><th>Дата</th><th>Резултат</th><th>Състояние</th><th><span class="visually-hidden">Действие</span></th></tr></thead><tbody>${state.data.sessions.map(s => `<tr><td>${e(s.name)}</td><td>${e(dateLabel(s.created_at,true))}</td><td>${s.correct}/${s.graded}${s.status === "completed" ? "" : " оценени"}</td><td>${e(statusNames[s.status])}</td><td><a class="secondary" href="#/game/${s.id}">${s.status === "completed" ? "Резултат" : "Продължи"}</a> <button class="danger-button" data-action="delete-session" data-id="${s.id}" aria-label="Изтрий тренировка">Изтрий</button></td></tr>`).join("")}</tbody></table></div>` : '<div class="empty-large"><h2>Няма тренировки</h2><a class="primary spaced" href="#/">Към тренировките</a></div>'}</section>`;
+  <section class="spaced"><div class="section-heading"><h2>Всички тренировки</h2></div>${state.data.sessions.length ? `<div class="table-wrapper" tabindex="0" role="region" aria-label="Всички тренировки"><table class="history-table"><thead><tr><th>Тренировка</th><th>Дата</th><th>Резултат</th><th>Състояние</th><th><span class="visually-hidden">Действие</span></th></tr></thead><tbody>${state.data.sessions.map(s => `<tr><td>${e(s.name)}</td><td>${e(dateLabel(s.created_at,true))}</td><td>${s.correct}/${s.graded}${s.status === "completed" ? "" : " оценени"}</td><td>${e(statusNames[s.status])}</td><td><a class="secondary" href="#/game/${s.id}">${s.status === "completed" ? "Резултат" : "Продължи"}</a> ${canManage() ? `<button class="danger-button" data-action="delete-session" data-id="${s.id}" aria-label="Изтрий тренировка">Изтрий</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty-large"><h2>Няма тренировки</h2><a class="primary spaced" href="#/">Към тренировките</a></div>'}</section>`;
 }
 
 function library() {
@@ -169,7 +174,7 @@ function libraryResults() {
   const f = state.library;
   const term = f.q.trim().toLocaleLowerCase("bg");
   const questions = state.questions.filter(q => (!f.category || q.category === f.category) && (!f.kind || (f.kind === "visual" ? !!q.image : !q.image)) && (!term || `${q.prompt} ${q.answer}`.toLocaleLowerCase("bg").includes(term)));
-  $("#library-results").innerHTML = `<p class="result-count">${questions.length} намерени въпроса</p>${questions.slice(0,f.limit).map(q => `<details class="library-row"><summary><div>${meta(q)}<h3>${e(q.prompt)}</h3></div></summary><div class="library-content">${questionImage(q,true)}<p class="canonical">${e(q.answer)}</p>${q.alternatives.length ? `<p class="small muted">Допустими варианти: ${e(q.alternatives.join(" · "))}</p>` : ""}<p class="muted small">${e(q.explanation)}</p>${sourceLink(q)}<div class="library-actions"><button class="secondary" data-action="edit" data-id="${q.id}">Редактирай</button><button class="danger-button" data-action="delete-question" data-id="${q.id}">Изтрий</button></div></div></details>`).join("") || '<p class="empty">Няма намерени въпроси.</p>'}${questions.length > f.limit ? '<div class="library-more"><button class="secondary" data-action="library-more">Покажи още 25</button></div>' : ""}`;
+  $("#library-results").innerHTML = `<p class="result-count">${questions.length} намерени въпроса</p>${questions.slice(0,f.limit).map(q => `<details class="library-row"><summary><div>${meta(q)}<h3>${e(q.prompt)}</h3></div></summary><div class="library-content">${questionImage(q,true)}<p class="canonical">${e(q.answer)}</p>${q.alternatives.length ? `<p class="small muted">Допустими варианти: ${e(q.alternatives.join(" · "))}</p>` : ""}<p class="muted small">${e(q.explanation)}</p>${sourceLink(q)}${canManage() ? `<div class="library-actions"><button class="secondary" data-action="edit" data-id="${q.id}">Редактирай</button><button class="danger-button" data-action="delete-question" data-id="${q.id}">Изтрий</button></div>` : ""}</div></details>`).join("") || '<p class="empty">Няма намерени въпроси.</p>'}${questions.length > f.limit ? '<div class="library-more"><button class="secondary" data-action="library-more">Покажи още 25</button></div>' : ""}`;
 }
 
 function openEditor(identity) {
@@ -276,7 +281,7 @@ function reviewItem(q, a, index) {
   <div class="review-card"><span>Даден отговор</span><strong>${e(a.text || "Без отговор")}</strong></div>
   <div class="review-card"><span>Верен отговор</span><strong>${e(q.answer)}</strong></div>
   <div class="review-card verdict-card ${a.correct ? "correct" : "wrong"}"><span>Резултат</span><strong>${verdict}</strong></div>
-  <div class="review-card action-card"><button class="secondary" data-action="accept-answer" data-index="${index}"${!wrong || !a.text.trim() ? " disabled" : ""}>Приеми за верен</button></div>
+  ${canManage() ? `<div class="review-card action-card"><button class="secondary" data-action="accept-answer" data-index="${index}"${!wrong || !a.text.trim() ? " disabled" : ""}>Приеми за верен</button></div>` : ""}
   <div class="review-card action-card"><button class="secondary" data-action="review-details" data-index="${index}">Подробности</button></div>
   </div></div></article>`;
 }
