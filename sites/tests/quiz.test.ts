@@ -25,7 +25,7 @@ test('edits, deleted questions, historical acceptance and invalid media',()=>{
   const original=structuredClone(q.questions.find(b=>b.id===id)!);
   q.updateQuestion(id,{...original,prompt:original.prompt+' Променен въпрос.'});
   q.act(s.id,{action:'accept_answer',revision:1,index:0});
-  assert.equal(s.answers[0].correct,true);assert.equal(s.answers[0].variant_saved,false);
+  assert.equal(s.answers[0].correct,true);assert.equal(q.session(s.id).answers[0].variant_saved,false);
   assert(!checkAnswer(q.questions.find(b=>b.id===id)!,'исторически вариант'));
   assert.throws(()=>q.updateQuestion(id,{...original,image:{path:'__proto__'}}),AppError);
   assert.throws(()=>q.updateQuestion(id,{...original,alternatives:null}),AppError);
