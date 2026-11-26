@@ -17,7 +17,20 @@ test('Python normalization and all curated answer variants stay compatible',()=>
   assert.notEqual(normalizeAnswer('-2'),normalizeAnswer('2'));
 });
 test('invalid filters and counts are rejected',()=>{
-  for(const config of [{mode:{}},{mode:'toString'},{categories:['__proto__']},{count:true,mode:'topic'},{difficulty:'unknown'},{categories:[]}])assert.throws(()=>validateConfig(config),AppError);
+  for(const config of [{mode:null},{categories:null},{difficulty:null},{mode:'topic',count:null},{mode:{}},{mode:'toString'},{categories:['__proto__']},{count:true,mode:'topic'},{difficulty:'unknown'},{categories:[]}])assert.throws(()=>validateConfig(config),AppError);
+});
+test('edits, deleted questions, historical acceptance and invalid media',()=>{
+  const q=new Quiz(structuredClone(bank),[]),s=q.create({mode:'topic',count:1}),id=s.questions[0].id;
+  q.act(s.id,{action:'next',revision:0,question_index:0,text:'исторически вариант'});
+  const original=structuredClone(q.questions.find(b=>b.id===id)!);
+  q.updateQuestion(id,{...original,prompt:original.prompt+' Променен въпрос.'});
+  q.act(s.id,{action:'accept_answer',revision:1,index:0});
+  assert.equal(s.answers[0].correct,true);assert.equal(s.answers[0].variant_saved,false);
+  assert(!checkAnswer(q.questions.find(b=>b.id===id)!,'исторически вариант'));
+  assert.throws(()=>q.updateQuestion(id,{...original,image:{path:'__proto__'}}),AppError);
+  assert.throws(()=>q.updateQuestion(id,{...original,alternatives:null}),AppError);
+  q.deleteQuestion(id);assert.equal(s.questions[0].prompt,original.prompt);
+  q.deleteSession(s.id);assert.equal(q.summary().sessions.length,0);
 });
 test('51 questions, six rounds, retries, visual selection and acceptance',()=>{
   const q=new Quiz(structuredClone(bank),[]),s=q.create({mode:'full'});

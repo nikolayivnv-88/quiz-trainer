@@ -27,11 +27,11 @@ function string(v: unknown, name: string, max=2000, required=true): string {
   return (v as string).trim();
 }
 export function validateConfig(v: RecordValue) {
-  const mode=v.mode ?? 'quick', categories=v.categories ?? Object.keys(config.categories), difficulty=v.difficulty ?? 'mixed';
+  const mode=v.mode===undefined?'quick':v.mode, categories=v.categories===undefined?Object.keys(config.categories):v.categories, difficulty=v.difficulty===undefined?'mixed':v.difficulty;
   if (typeof mode!=='string'||!Object.hasOwn(config.modes,mode)) fail('Невалиден режим.');
   if (!Array.isArray(categories) || !categories.length || categories.some(c=>typeof c!=='string'||!Object.hasOwn(config.categories,c))) fail('Изберете поне една категория.');
   if (typeof difficulty!=='string'||!['mixed',...Object.keys(config.difficulties)].includes(difficulty)) fail('Невалидна трудност.');
-  const count=mode==='full'?51:mode==='quick'?10:v.count??10;
+  const count=mode==='full'?51:mode==='quick'?10:v.count===undefined?10:v.count;
   if (!Number.isInteger(count)||count<1||count>51) fail('Броят въпроси трябва да е между 1 и 51.');
   return {mode,categories:[...new Set<string>(categories)],difficulty,count};
 }
@@ -78,7 +78,7 @@ export class Quiz {
     if(action==='save_answer'||action==='next') {
       if(s.status!=='playing')fail('Този кръг вече е предаден.');
       if(v.question_index!==i)fail('Този въпрос вече е предаден. Презаредете играта, за да продължите.',409);
-      const a=s.answers[i];a.text=string(v.text??'','вашият отговор',2000,false);
+      const a=s.answers[i];a.text=string(v.text===undefined?'':v.text,'вашият отговор',2000,false);
       if(action==='next'){a.correct=checkAnswer(s.questions[i],a.text);a.graded_at=stamp();if(i+1===end)s.status='review';else s.index++;}
     } else if(action==='next_round') {
       if(s.status!=='review')fail('Първо предайте кръга.');
@@ -104,11 +104,11 @@ export class Quiz {
     for(const [key,choices] of Object.entries({category:config.categories,difficulty:config.difficulties})){
       if(typeof v[key]!=='string'||!Object.hasOwn(choices,v[key]))fail(`Невалидно поле: ${key}.`);fields[key]=v[key];
     }
-    const variants=v.alternatives??[];
+    const variants=v.alternatives===undefined?[]:v.alternatives;
     if(!Array.isArray(variants)||variants.length>15)fail('Допустимите варианти трябва да са списък до 15 отговора.');
     fields.alternatives=variants.map((a:unknown)=>string(a,'вариант',500));
     fields.image=null;
-    if(v.image!=null){const media=(config.media as RecordValue)[v.image.path];if(!media)fail('Невалидно изображение.');fields.image=Object.fromEntries(['path','credit','license','source_url','license_url','changes'].map(k=>[k,media[k]]));}
+    if(v.image!=null){if(typeof v.image!=='object'||typeof v.image.path!=='string'||!Object.hasOwn(config.media,v.image.path))fail('Невалидно изображение.');const media=(config.media as RecordValue)[v.image.path];fields.image=Object.fromEntries(['path','credit','license','source_url','license_url','changes'].map(k=>[k,media[k]]));}
     const fingerprint=(s:string)=>fold(s).replace(/[^\p{L}\p{N}]/gu,'');
     if(this.questions.some(other=>other.id!==id&&fingerprint(other.prompt)===fingerprint(fields.prompt)))fail('Вече има въпрос със същото условие.',409);
     const changed=Object.keys(fields).some(k=>JSON.stringify(q[k])!==JSON.stringify(fields[k]));
